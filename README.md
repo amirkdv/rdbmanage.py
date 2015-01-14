@@ -1,4 +1,4 @@
-```bash
+```
 usage: rdbmanage [-h] [-c CONF_FILE] [-j JOB] [-m MAX] [-f]
 
 optional arguments:
