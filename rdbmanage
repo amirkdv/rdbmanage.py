@@ -1,0 +1,216 @@
+#!/usr/bin/env python
+
+import datetime
+import os
+import sys
+import time
+import argparse
+import traceback
+import subprocess
+from textwrap import fill
+from ConfigParser import SafeConfigParser
+
+class InvalidConfigFile: pass
+
+# rdiff-backup allows the following usage:
+#
+#   rdiff-backup --include-globbing-filelist FILE
+#
+# which expects FILE to look like this:
+#
+#   + /etc
+#   - /
+#
+# this function reads a string of the above form and returns an equivalent set
+# of options for rdiff-backup including only --include and --exclude, preserving
+# the orders.
+def _filelist_parser(filelist):
+    opts = []
+    for entry in filelist.strip().split('\n'):
+        if entry[:2] == '+ ':
+            opts.append('--include ' + entry[2:])
+        elif entry[:2] == '- ':
+            opts.append('--exclude ' + entry[2:])
+        else:
+            raise InvalidConfigFile("invalid filelist entry: '%s'" % entry)
+    return ' '.join(opts)
+
+class Config(object):
+    def __init__(self, conf_file):
+        self.parser = SafeConfigParser()
+        self.parser.read(conf_file)
+
+    def params(self, job):
+        items = self.parser.items('job:' + job, vars={'job': job})
+        return [k for k,v in items]
+
+    # e.g getparam('evolvingweb.ca', 'pre_backup_cmd'))
+    def getparam(self, job, key):
+        section = 'job:' + job
+        # job is magically populated for interpolation from the section name
+        conf_vars = {'job': job}
+        # filelist is defined in config file in readable format. filelist_opts is
+        # magically populated for interpolation to a sequence of --include and
+        # --exclude options.
+        if key != 'filelist':
+            conf_vars.update({'filelist_opts': self.getparam(job, 'filelist')})
+        value = self.parser.get(section, key, vars=conf_vars).strip()
+
+        parsers = {
+            'filelist': _filelist_parser,
+            'max_keep': lambda x: int(x),
+            'max_mirror_age': lambda x: float(x)
+        }
+        return parsers[key](value) if key in parsers else value.replace('\n', ' ')
+
+    def jobs(self):
+        jobs = self.parser.sections()
+        return [section[4:] for section in jobs if section[:4] == 'job:']
+
+def wrap(string):
+    return fill(string, width=100, initial_indent='  ',
+                subsequent_indent='      ', break_on_hyphens=False)
+
+def _readable_date(timestamp=None):
+    fmt = "%Y-%m-%d %H:%M"
+    if not timestamp:
+        return datetime.datetime.now().strftime(fmt)
+    else:
+        return datetime.datetime.fromtimestamp(timestamp).strftime()
+
+class RdbManage(object):
+    def __init__(self, conf_file, verbose=False):
+        self.config = Config(conf_file)
+        self.verbose = verbose
+
+    def log(self, message, job, echo=True):
+        message = message.strip() + '\n'
+        if echo:
+            sys.stderr.write(message)
+        message = '[%s] %s' % (_readable_date(), message)
+        with open(self.config.getparam(job, 'logs'), 'a+') as f:
+            f.write(message)
+
+    # return 0 for nothing to do, 1 for success -1 for failure
+    def backup(self, job, force=False):
+        incrs = self.incrs(job)
+        latest = incrs[-1] if len(incrs) else -1
+        age = int(time.time()) - latest
+        max_age = self.config.getparam(job, 'max_mirror_age') * 3600
+        msg = 'mirror for %s is %.2f hrs old (max allowed: %.2f hrs)' % (job, age/3600.00, max_age/3600)
+        if age < max_age:
+            if force:
+                self.log('fetching new revision for %s\n' % job, job)
+            else:
+                self.log(msg + ', nothing to do!\n', job)
+                return 0
+        else:
+            self.log(msg + ', fetching new revision!\n', job)
+        pre_backup_cmd = self.config.getparam(job, 'pre_backup_cmd')
+        if pre_backup_cmd:
+            msg = "running pre-backup command for %s:\n" % job
+            self.log(msg + wrap(pre_backup_cmd) + '\n', job)
+            retcode = self._subp_cmd(pre_backup_cmd, shell=True, op='pre-backup')
+            if retcode == -1:
+                return -1
+        backup_cmd = self.config.getparam(job, 'backup_cmd')
+        msg = 'running backup command for %s:\n%s\n'% (job, wrap(backup_cmd))
+        self.log(msg, job)
+        return self._subp_cmd(backup_cmd, shell=True)
+
+    def incrs(self, job, readable=False):
+        path = self.config.getparam(job, 'dir')
+        if not os.path.exists(os.path.join(path, 'rdiff-backup-data')):
+            return []
+        cmd = ['rdiff-backup', '-l', '--parsable-output', path]
+        lines = subprocess.check_output(cmd).strip().split('\n')
+        incrs = sorted([int(l.split(' ')[0]) for l in lines])
+        if readable:
+            return [_readable_date(inc) for inc in incrs]
+        else:
+            return incrs
+
+    # removes old revisions as per conf
+    # return 0 for nothing to do, 1 for success -1 for failure
+    def clear(self, job):
+        max_keep = self.config.getparam(job, 'max_keep')
+        incrs = self.incrs(job)
+        n_incrs = len(incrs)
+        msg = '%s has %d revisions (max allowed: %d)' % (job, n_incrs, max_keep)
+        if n_incrs <= max_keep:
+            self.log(msg + ', nothing to clear!\n', job)
+            return 0
+        else:
+            self.log(msg + ', clearing old revisions\n', job)
+            threshold = incrs[n_incrs-max_keep] - 1
+            cmd = ['rdiff-backup', '--remove-older-than',
+                   str(threshold), '--force', self.config.getparam(job, 'dir')]
+            return self._subp_cmd(cmd, job=job, op='clear')
+
+    # tests host config (status_cmd), returns 1 for success and 1 for failure
+    def test(self, job):
+        self.log('testing connection for %s' % job, job)
+        cmd = self.config.getparam(job, 'status_cmd')
+        return self._subp_cmd(cmd, job=job, op='test', shell=True)
+
+    # runs a command in a subprocess, returns 1 for success and -1 for failure
+    def _subp_cmd(self, cmd, shell=False, job=None, op='backup'):
+        p = subprocess.Popen(cmd, shell=shell, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE)
+        out, err = p.communicate()
+        if p.returncode:
+            msg = '%s failed for %s (return code: %d)\n' % (op, job, p.returncode)
+            self.log(msg, job)
+            self.log(traceback.format_exc(), job, echo=False)
+            return -1
+        return 1
+
+# returned values are exit codes of rdbmanage:
+#   0 success, 1 bad usage, 2 config not found
+def main(args):
+    parser = argparse.ArgumentParser(prog='rdbmanage')
+    parser.add_argument('-c', dest='conf_file',
+                        default=os.path.join(os.getcwd(), 'rdbmanage.conf'),
+                        action='store', help='string: path to rdbmanage configuration file')
+    parser.add_argument('-j', dest='job', action='store',
+                        help='string: job name to be updated (backup and clear)')
+    parser.add_argument('-m', dest='max', action='store',
+                        help='integer: maximum number of increments to fetch (-1 implies no maximum), ignored if -j is provided')
+    parser.add_argument('-f', dest='force', action='store_true',
+                        help='flag: force fetch a backup, only considered with -j')
+    namespace = parser.parse_args(args)
+    conf = namespace.conf_file
+    if not os.path.exists(conf):
+        sys.stderr.write("no such file '%s'\n" % conf)
+        return 2
+    M = RdbManage(conf)
+    jobs = M.config.jobs()
+    if namespace.job:
+        job = namespace.job
+        if job not in jobs:
+            sys.stderr.write("no such job: '%s'\n" % job)
+            return 1
+        if M.test(job) == -1: return 1
+        if M.backup(job, force=namespace.force) == -1: return 2
+        if M.clear(job) == -1: return 3
+    elif namespace.max:
+        max_ops = int(namespace.max)
+        ops = 0
+        for job in jobs:
+            if max_ops != -1 and ops >= max_ops:
+                sys.stderr.write('hit limit of %d backups, exiting\n' % max_ops)
+                return 0
+            if M.test(job) == -1: return 1
+
+            backup_retcode = M.backup(job)
+            if backup_retcode == -1: return 2
+            elif backup_retcode != 0: ops += 1
+
+            if M.clear(job) == -1: return 3
+    else:
+        parser.print_help()
+        return 2
+    return 0
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))
