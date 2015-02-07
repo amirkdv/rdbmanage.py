@@ -1,7 +1,6 @@
 * Features:
  * Error handling:
-    * error types: `rdiff-backup` not installed, connection failed, SSH access denied, `pre_backup_cmd` failed, etc.
-    * don't stand in the way of `rdiff-backup` fixing failed backups.
+    * rdiff-backup not installed
  * log rotation (destination cannot be entirely configurable),
  * installer
 * Test:
