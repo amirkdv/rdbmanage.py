@@ -226,30 +226,30 @@ def main(args):
                         default=os.path.join(os.getcwd(), 'rdbmanage.conf'),
                         help='string: path to rdbmanage configuration file')
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument('-j', dest='job', action='store',
-                        help='string: job to update (backup and clear)')
     group.add_argument('-l', dest='list_increments', action='store_true',
                         help='list increments of all jobs')
-    group.add_argument('-t', dest='check_job', action='store',
-                        help='string: check configuration of given job')
+    group.add_argument('-j', dest='job', action='store',
+                        help='string: job to update (backup and clear)')
     group.add_argument('-m', dest='max_ops', action='store',
                         help="""integer: maximum number of increments to fetch
                                 (-1 implies no maximum), -m is ignored if -j
                                 is provided.""")
+    group.add_argument('-t', dest='check_job', action='store',
+                        help='string: check configuration of given job')
     namespace = parser.parse_args(args)
     conf = namespace.conf_file
     if not os.path.exists(conf):
         sys.stderr.write("No such file '{}'\n".format(conf))
         return 2
     M = RdbManage(conf)
-    if namespace.job:
-        return M.update_job(namespace.update_job)
-    elif namespace.list_increments:
+    if namespace.list_increments:
         return M.list_increments()
-    elif namespace.check_job:
-        return M.check_job(namespace.check_job)
+    elif namespace.job:
+        return M.update_job(namespace.update_job)
     elif namespace.max_ops:
         return M.update_all(namespace.max_ops)
+    elif namespace.check_job:
+        return M.check_job(namespace.check_job)
     else:
         parser.print_help()
         return 2
