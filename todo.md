@@ -1,5 +1,4 @@
 * Features:
- * involve local user (all `rdiff-backup` commands must be run as local user),
  * Error handling:
     * e-mail notifications,
     * error types: `rdiff-backup` not installed, connection failed, SSH access denied, `pre_backup_cmd` failed, etc.
