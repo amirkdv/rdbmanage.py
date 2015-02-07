@@ -1,14 +1,16 @@
 #!/usr/bin/env python
-import datetime
 import os
 import sys
 import pwd
 import time
+import datetime
 import argparse
+import ConfigParser
 import traceback
 import subprocess
 import shlex
-from ConfigParser import SafeConfigParser
+import smtplib
+import email.mime.text
 
 _debug = True
 
@@ -94,6 +96,21 @@ class Job(object):
         self.log('testing config and connection for %s' % self.name)
         self._subp_cmd(shlex.split(self.opts['status_cmd']))
 
+
+    def email(self, msg):
+        self.log('sending notification for job %s to %s' % \
+                    (self.name, self.opts['email_to']))
+        msg = email.mime.text.MIMEText(msg)
+        msg['Subject'] = 'Notification from rdbmanage - job: %s' % self.name
+        srv = smtplib.SMTP(self.opts['smtp_server'], self.opts['smtp_port'])
+        if self.opts['smtp_pass']:
+            srv.ehlo()
+            srv.starttls()
+            srv.ehlo()
+            srv.login(self.opts['smtp_user'], self.opts['smtp_pass'])
+        srv.sendmail(self.opts['smtp_user'], self.opts['email_to'], msg.as_string())
+        srv.close()
+
     # runs a command in a subprocess as the user of this job; returns a tuple of
     # strings for (stdout, stderr) and raises a Failure in case of error.
     #
@@ -126,7 +143,7 @@ class Job(object):
 
 class RdbManage(object):
     def __init__(self, conf_path):
-        self.parser = SafeConfigParser()
+        self.parser = ConfigParser.SafeConfigParser()
         self.parser.read(conf_path)
 
     def load_job(self, name):
@@ -149,6 +166,7 @@ class RdbManage(object):
         job = self.load_job(name)
         try:
             job.test()
+            job.email('Just testing configuration!')
             return 0
         except Failure:
             sys.stderr.write('Testing configuration for %s failed!' % name)
