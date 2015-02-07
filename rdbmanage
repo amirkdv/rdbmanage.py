@@ -145,6 +145,15 @@ class RdbManage(object):
                                 (name, '\n  '.join(job.incrs(readable=True))))
         return 0
 
+    def check_job(self, name):
+        job = self.load_job(name)
+        try:
+            job.test()
+            return 0
+        except Failure:
+            sys.stderr.write('Testing configuration for %s failed!' % name)
+            return 1
+
     # update a single job, returns 0 for success, 2 for failure
     def update_job(self, name, force=False):
         job = self.load_job(name)
@@ -185,9 +194,11 @@ class RdbManage(object):
 
 def _readable_date(timestamp=None):
     fmt = "%Y-%m-%dT%H:%M:%S"
-    if not timestamp:
-        timestamp = datetime.datetime.now()
-    return datetime.datetime.fromtimestamp(timestamp).strftime(fmt)
+    if timestamp:
+        dt = datetime.datetime.fromtimestamp(timestamp)
+    else:
+        dt = datetime.datetime.now()
+    return dt.strftime(fmt)
 
 # returned values are exit codes of rdbmanage:
 #   0 success, 1 bad usage, 2 config not found
@@ -200,7 +211,9 @@ def main(args):
     group.add_argument('-j', dest='job', action='store',
                         help='string: job to update (backup and clear)')
     group.add_argument('-l', dest='list_increments', action='store_true',
-                        help='string: list increments for a job')
+                        help='list increments of all jobs')
+    group.add_argument('-t', dest='check_job', action='store',
+                        help='string: check configuration of given job')
     group.add_argument('-m', dest='max_ops', action='store',
                         help="""integer: maximum number of increments to fetch
                                 (-1 implies no maximum), -m is ignored if -j
@@ -215,6 +228,8 @@ def main(args):
         return M.update_job(namespace.update_job)
     elif namespace.list_increments:
         return M.list_increments()
+    elif namespace.check_job:
+        return M.check_job(namespace.check_job)
     elif namespace.max_ops:
         return M.update_all(namespace.max_ops)
     else:
