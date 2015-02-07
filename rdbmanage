@@ -137,13 +137,30 @@ class Job(object):
                       '---(stdout)---\n%s\n---(stderr)---\n%s\n' % (out, err))
         return (out, err)
 
+# This class is the glued to the CLI: for the most part, every CLI command (or
+# usage) corresponds to a method here. Therefore:
+#
+# - The state of an instance is exactly the contents of the configuration file.
+# - Nothing is logged, all communications are to stdout and stdin
+# - Methods corresponding to CLI commands return integers intented to be Unix
+#   exit codes.
 class RdbManage(object):
     def __init__(self, conf_path):
+        self.conf_path = conf_path
         self.parser = ConfigParser.SafeConfigParser()
         self.parser.read(conf_path)
 
+    # returns a Job object or -1 in case of error.
     def load_job(self, name):
-        items = self.parser.items('job:' + name, vars={'job': name})
+        try:
+            items = self.parser.items('job:' + name, vars={'job': name})
+        except Exception, e:
+            if e.__class__.__module__[:13] == 'ConfigParser':
+                sys.stderr.write('Corrupt configuration file: %s\n%s' % \
+                                    (self.conf_path, e))
+                return -1
+            else:
+                raise e
         opts = {k: v.replace('\n', ' ') for (k,v) in items}
         return Job(name, opts)
 
@@ -151,13 +168,16 @@ class RdbManage(object):
     def jobs(self):
         return [sec[4:] for sec in self.parser.sections() if sec[:4] == 'job:']
 
+    # CLI: rdbmanage -l
     def list_increments(self):
         for name in self.jobs:
             job = self.load_job(name)
-            sys.stderr.write('%s:\n  %s\t(*) current mirror\n' % \
+            if job == -1: return 1
+            sys.stdout.write('%s:\n  %s\t(*) current mirror\n' % \
                                 (name, '\n  '.join(job.incrs(readable=True))))
         return 0
 
+    # CLI: rdbmanage -t CHECK_JOB
     def check_job(self, name):
         job = self.load_job(name)
         try:
@@ -168,8 +188,8 @@ class RdbManage(object):
             sys.stderr.write('Testing configuration for %s failed!' % name)
             return 1
 
-    # update a single job, returns 0 for success, 2 for failure
-    def update_job(self, name, force=False):
+    # CLI: rdbmanage -j JOB
+    def update_job(self, name):
         job = self.load_job(name)
         try:
             job.test()
@@ -177,8 +197,8 @@ class RdbManage(object):
             job.clear()
             return 0
         except Failure:
-            sys.stderr.write('Failed to update %s, see logs at %s\n' % \
-                                (job.name, job.opts['logs']))
+            sys.stderr.write('rdbmanage: Failed to update %s, ' % job.name +
+                             'logs are at %s\n' % job.opts['logs'])
             return 1
 
     # updates all jobs up to a maximum number of operations; -1 means no maximum
