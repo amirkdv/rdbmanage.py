@@ -143,7 +143,7 @@ class RdbManage(object):
         job = self.load_job(name)
         try:
             job.test()
-            job.backup(force=force)
+            job.backup(force=True)
             job.clear()
             return 0
         except Failure:
@@ -190,15 +190,13 @@ def main(args):
     parser.add_argument('-c', dest='conf_file', action='store',
                         default=os.path.join(os.getcwd(), 'rdbmanage.conf'),
                         help='string: path to rdbmanage configuration file')
-    parser.add_argument('-j', dest='job', action='store',
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument('-j', dest='job', action='store',
                         help='string: job to update (backup and clear)')
-    parser.add_argument('-m', dest='max_ops', action='store',
+    group.add_argument('-m', dest='max_ops', action='store',
                         help="""integer: maximum number of increments to fetch
                                 (-1 implies no maximum), -m is ignored if -j
                                 is provided.""")
-    parser.add_argument('-f', dest='force', action='store_true',
-                        help="""flag: force fetch a backup, -f is ignored if
-                                -m is provided.""")
     namespace = parser.parse_args(args)
     conf = namespace.conf_file
     if not os.path.exists(conf):
@@ -206,7 +204,7 @@ def main(args):
         return 2
     M = RdbManage(conf)
     if namespace.job:
-        return M.update_job(namespace.job, force=namespace.force)
+        return M.update_job(namespace.job)
     elif namespace.max_ops:
         return M.update_all(namespace.max_ops)
     else:
