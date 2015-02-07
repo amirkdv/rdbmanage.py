@@ -149,8 +149,9 @@ class RdbManage(object):
         self.conf_path = conf_path
         self.parser = ConfigParser.SafeConfigParser()
         self.parser.read(conf_path)
+        self.job_names = [s[4:] for s in self.parser.sections() if s[:4] == 'job:']
 
-    # returns a Job object or -1 in case of error.
+    # returns a Job object or -1 in case of gracefully handled error.
     def load_job(self, name):
         try:
             items = self.parser.items('job:' + name, vars={'job': name})
@@ -164,13 +165,9 @@ class RdbManage(object):
         opts = {k: v.replace('\n', ' ') for (k,v) in items}
         return Job(name, opts)
 
-    @property
-    def jobs(self):
-        return [sec[4:] for sec in self.parser.sections() if sec[:4] == 'job:']
-
     # CLI: rdbmanage -l
     def list_increments(self):
-        for name in self.jobs:
+        for name in self.job_names:
             job = self.load_job(name)
             if job == -1: return 1
             sys.stdout.write('%s:\n  %s\t(*) current mirror\n' % \
@@ -206,7 +203,7 @@ class RdbManage(object):
     def update_all(self, max_ops=-1):
         fail_cnt = 0
         ops = 0
-        for name in self.jobs:
+        for name in self.job_names:
             if max_ops != -1 and ops >= max_ops:
                 sys.stderr.write('Hit maximum no. of %s operations, exiting.\n' % max_ops)
                 break
