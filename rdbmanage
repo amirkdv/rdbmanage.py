@@ -117,17 +117,14 @@ class Job(object):
     # All arguments (except for preexec_fn, stdout, and stderr) are passed
     # untouched to Popen constructor.
     def _subp_cmd(self, args, **kwargs):
-        def demote(pwd_record):
-            uid = pwd_record.pw_uid
-            gid = pwd_record.pw_gid
-            def f():
-                if os.getuid() == uid: return
-                os.setgid(gid)
-                os.setuid(uid)
-            return f
+        pwd_record = pwd.getpwnam(self.opts['user'])
+        def demote():
+            if os.getuid() == pwd_record.pw_uid: return
+            os.setgid(pwd_record.pw_gid)
+            os.setuid(pwd_record.pw_uid)
         try:
             kwargs.update({
-                'preexec_fn': demote(pwd.getpwnam(self.opts['user'])),
+                'preexec_fn': demote,
                 'stdout': subprocess.PIPE,
                 'stderr': subprocess.PIPE
             })
@@ -245,7 +242,7 @@ def main(args):
     if namespace.list_increments:
         return M.list_increments()
     elif namespace.job:
-        return M.update_job(namespace.update_job)
+        return M.update_job(namespace.job)
     elif namespace.max_ops:
         return M.update_all(namespace.max_ops)
     elif namespace.check_job:
