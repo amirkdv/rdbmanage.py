@@ -77,11 +77,10 @@ class Job(object):
     # removes old revisions as per conf
     # Failure in case of error.
     def clear(self):
-        max_keep = self.opts['max_keep']
+        max_keep = int(self.opts['max_keep'])
         incrs = self.incrs()
         n_incrs = len(incrs)
-        msg = '%s has %s revisions (max allowed: %s)' % \
-                (self.name, n_incrs, n_incrs)
+        msg = 'There are %d revisions (max allowed: %d)' % (n_incrs, max_keep)
         if n_incrs <= max_keep:
             self.log(msg + ', nothing to clear.\n')
         else:
