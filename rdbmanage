@@ -57,12 +57,7 @@ class Job(object):
     def fail(self, message):
         message = str(message)
         tb = traceback.format_stack()
-        if tb:
-            tb.pop(-1)
-            tb = ''.join(tb)
-        else:
-            tb = ''
-        self.log(message + tb)
+        self.log(message + ''.join(tb[:-1]) if tb else '')
         raise Failure(message)
 
     # logs to log file, if _debug to stderr too
@@ -72,13 +67,12 @@ class Job(object):
         if _debug:
             sys.stderr.write('[job: %s] %s' % (self.name, message))
         with open(self.opts['logs'], 'a+') as f:
-            f.write('[%s] %s' % (datetime.datetime.now().isoformat(),message))
+            f.write('[%s] %s' % (_readable_date() ,message))
 
     # returns the number of revisions fetched (0 or 1). Raises a Failure in case
     # of error.
     def backup(self, force=False):
-        incrs = self.incrs
-        latest = incrs[-1] if len(incrs) else -1
+        latest = self.incrs[-1] if len(self.incrs) else -1
         age = int(time.time()) - latest
         max_age = float(self.opts['max_mirror_age']) * 3600
         msg = 'mirror is %.2f hrs old (max allowed: %.2f hrs)' % \
@@ -91,36 +85,37 @@ class Job(object):
         if self.opts['pre_backup_cmd']:
             self.log("pre-backup: %s" % self.opts['pre_backup_cmd'])
             cmd = shlex.split(self.opts['pre_backup_cmd'])
-            (code, out, err) = self._subp_cmd(cmd)
+            code, out, err = self._subp_cmd(cmd)
             if code:
-                self.fail('pre-backup failed: %s\n%s%s' % (' '.join(cmd), out, err))
+                msg = 'pre-backup failed: %s\n%s%s' % (' '.join(cmd), out, err)
+                self.fail(msg)
+                self.email(msg)
 
         self.log('starting backup: %s' % self.opts['backup_cmd'])
         cmd = shlex.split(self.opts['backup_cmd'])
-        (code, out, err) = self._subp_cmd(cmd)
+        code, out, err = self._subp_cmd(cmd)
         if code:
-            self.fail('backup failed: %s\n%s%s' % (' '.join(cmd), out, err))
-
+            msg = 'backup failed: %s\n%s%s' % (' '.join(cmd), out, err)
+            self.fail(msg)
+            self.email(msg)
         return 1
 
     # removes old revisions as per conf and raises Failure in case of error.
     def clear(self):
-        max_keep = int(self.opts['max_keep'])
-        incrs = self.incrs
-        n_incrs = len(incrs)
+        max_keep, n_incrs = int(self.opts['max_keep']), len(self.incrs)
         msg = 'There are %d revisions (max allowed: %d)' % (n_incrs, max_keep)
         if n_incrs <= max_keep:
             self.log(msg + ', nothing to clear.\n')
             return
 
         self.log(msg + ', clearing old revisions\n')
-        threshold = incrs[n_incrs - max_keep] - 1
-        cmd = ['rdiff-backup', '--remove-older-than', str(threshold),
-                '--force', self.opts['dir']]
-        (code, out, err) = self._subp_cmd(cmd)
+        threshold = str(self.incrs[n_incrs - max_keep] - 1)
+        cmd = ['rdiff-backup', '--remove-older-than', threshold, '--force', self.opts['dir']]
+        code, out, err = self._subp_cmd(cmd)
         if code:
-            self.fail('failed to clear old revisions: %s\n%s%s' %
-                        ' '.join(cmd), out, err)
+            msg = 'failed to clear old revisions: %s\n%s%s' % (' '.join(cmd), out, err)
+            self.fail(msg)
+            self.email(msg)
 
     # runs the status_cmd (intended to be light sanity check), raises Failure in
     # case of error.
@@ -209,8 +204,7 @@ class RdbManage(object):
         for name in self.job_names:
             job = self.load_job(name)
             if not isinstance(job, Job): return int(job) if job else 1
-            incrs = job.incrs
-            incrs = '\n  '.join([_readable_date(incr) for incr in incrs])
+            incrs = '\n  '.join([_readable_date(incr) for incr in job.incrs])
             sys.stdout.write('%s:\n  %s\t(*) current mirror\n' % (name, incrs))
         return 0
 
