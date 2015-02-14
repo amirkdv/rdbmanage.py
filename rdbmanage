@@ -52,8 +52,7 @@ class Job(object):
             self.fail('Failed to create directory %s: %s\n%s' % (path, out, err))
 
 
-    # the prefered method of failing so they all get logged. Failures raised in
-    # this program are assumed to all have initiated here (and hence logged).
+    # the prefered method of failing so they all get logged.
     def fail(self, message):
         message = str(message)
         tb = traceback.format_stack()
@@ -84,6 +83,7 @@ class Job(object):
         self.log(msg + ', fetching new revision.\n')
         if self.opts['pre_backup_cmd']:
             self.log("pre-backup: %s" % self.opts['pre_backup_cmd'])
+            # FIXME catch shlex.split exceptions
             cmd = shlex.split(self.opts['pre_backup_cmd'])
             code, out, err = self._subp_cmd(cmd)
             if code:
@@ -92,6 +92,7 @@ class Job(object):
                 self.email(msg)
 
         self.log('starting backup: %s' % self.opts['backup_cmd'])
+        # FIXME catch shlex.split exceptions
         cmd = shlex.split(self.opts['backup_cmd'])
         code, out, err = self._subp_cmd(cmd)
         if code:
@@ -120,6 +121,7 @@ class Job(object):
     # runs the status_cmd (intended to be light sanity check), raises Failure in
     # case of error.
     def test(self):
+        # FIXME catch shlex.split exceptions
         cmd = shlex.split(self.opts['status_cmd'])
         self.log('testing config and connection: %s' % ' '.join(cmd))
         code, out, err = self._subp_cmd(cmd)
@@ -132,6 +134,8 @@ class Job(object):
                     (self.name, self.opts['email_to']))
         msg = email.mime.text.MIMEText(msg)
         msg['Subject'] = 'Notification from rdbmanage - job: %s' % self.name
+        # FIXME catch smtplib exceptions:
+        # SMTPHeloError, SMTPRecipientsRefused, SMTPSenderRefused, SMTPDataError
         srv = smtplib.SMTP(self.opts['smtp_server'], self.opts['smtp_port'])
         if self.opts['smtp_pass']:
             srv.ehlo()
@@ -147,10 +151,12 @@ class Job(object):
     # All arguments (except for preexec_fn, stdout, and stderr) are passed
     # untouched to Popen constructor.
     def _subp_cmd(self, args, **kwargs):
+        # FIXME catch KeyError, user not found
         pwd_record = pwd.getpwnam(self.opts['user'])
         def demote():
             # don't try to set uid if you don't need it (otherwise all users of
             # rdbmanage must be sudoers).
+            # FIXME catch os.OSError
             if os.getuid() != pwd_record.pw_uid:
                 os.setuid(pwd_record.pw_uid)
             if os.getgid() != pwd_record.pw_gid:
@@ -178,6 +184,8 @@ class RdbManage(object):
     def __init__(self, conf_path):
         self.conf_path = conf_path
         self.parser = ConfigParser.SafeConfigParser()
+        # FIXME check if file actually exists; parser.read() does not complain
+        # https://docs.python.org/2/library/configparser.html#ConfigParser.RawConfigParser.read
         self.parser.read(conf_path)
         self.job_names = [s[4:] for s in self.parser.sections() if s[:4] == 'job:']
 
@@ -192,7 +200,7 @@ class RdbManage(object):
             return 1
         except Exception, e:
             if e.__class__.__module__[:13] == 'ConfigParser':
-                sys.stderr.write('Corrupt configuration file: %s\n%s' % \
+                sys.stderr.write('Bad configuration file: %s\n%s' % \
                                     (self.conf_path, e))
                 return 1
             else:
